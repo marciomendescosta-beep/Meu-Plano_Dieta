@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#153c32"><title>Meu Plano — Márcio</title>
-<link rel="manifest" href="./manifest.json?v=3">
-<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=3">
-<link rel="shortcut icon" type="image/png" href="./icon-192.png?v=3">
-<link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png?v=3">
+<link rel="manifest" href="./manifest.json?v=4">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png?v=4">
+<link rel="shortcut icon" type="image/png" href="./icon-192.png?v=4">
+<link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png?v=4">
 <meta name="application-name" content="Meu Plano">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -19,7 +19,11 @@
 <div class="card"><b>Relatório mensal</b><div class="row" style="margin-top:8px"><div><label class="small">Mês</label><input class="field" type="month" id="reportMonth"></div><button class="btn" id="makeReport">Gerar relatório</button></div><div id="monthlyReport" class="notice" style="margin-top:10px">Escolha um mês para comparar a primeira e a última pesagem registradas.</div></div></section>
 <section id="lembretes" class="panel"><div class="title">Lembretes e notificações</div><div class="card"><b>🔔 Notificações do navegador</b><p class="small">Autorize as notificações. O aplicativo deve permanecer aberto e ativo para conferir os horários. O Service Worker melhora a exibição das notificações no Android, mas não agenda alarmes confiáveis com o navegador fechado.</p><button class="btn" id="enableNotifications">Ativar notificações</button><div class="status" id="notificationStatus">Permissão ainda não solicitada.</div></div><div class="card" id="reminderList"></div></section>
 <section id="guia" class="panel"><div class="title">Orientações alimentares</div><div class="card"><b>🍽️ Organização da dieta recebida</b><p class="muted">O app organiza as opções do plano alimentar que você compartilhou, elaborado em 31/10/2025. Não substitui uma consulta nem atualiza automaticamente a prescrição.</p><ul><li><b>Café:</b> 100 g de cuscuz, 2 ovos, 30 g de queijo, 120 g de mamão e café sem açúcar.</li><li><b>Lanche:</b> 1 ovo cozido, conforme o plano.</li><li><b>Almoço:</b> 110 g de frango, 80 g de arroz, 100 g de feijão, salada e fruta.</li><li><b>Lanche da tarde:</b> banana e 10 g de leite desnatado em pó; ou opção de torradas, requeijão e uvas.</li><li><b>Jantar:</b> 110 g de frango, 180 g de inhame e vegetais, respeitando substituições.</li><li><b>Ceia opcional:</b> leite desnatado ou banana com leite em pó, conforme o plano.</li></ul></div><div class="notice"><b>Cuidados:</b> siga as orientações médicas sobre hidratação e exercício. Não altere medicamento por conta própria. O propranolol pode modificar a resposta da frequência cardíaca ao exercício; não use metas de batimentos sem orientação profissional.</div></section>
-<footer>Meu Plano • Seus registros ficam salvos localmente e sincronizam com a nuvem quando houver conexão.</footer></div>
+<footer>
+  <div id="syncStatus" class="small" style="margin-bottom:8px">A aguardar sincronização...</div>
+  <button class="btn alt" id="forceSyncBtn" type="button" style="padding:7px 12px;font-size:12px;margin-bottom:8px">Sincronizar agora</button>
+  <div>Meu Plano • Seus registros ficam salvos localmente e sincronizam com a nuvem quando houver conexão.</div>
+</footer></div>
 <script>
 const SYNC_URL = 'https://script.google.com/macros/s/AKfycbwv8gfiV00nlwbqNLh16hWqUmTQNMX17bk72_ClQXyQOpDicDoxQxEGTFg2OOYpTEuJ/exec';
 const SYNC_KEY = 'marcio_plano_v1';
@@ -30,81 +34,87 @@ function atualizarSaudacao(){const hora=new Date().getHours();const saudacao=hor
 atualizarSaudacao();setInterval(atualizarSaudacao,60000);
 const meals=[['wake','04h30','Acordar','Comece o dia com calma.'],['pre','04h45','Preparação para academia','Água e lanche opcional se sentir necessidade.'],['cafe','06h15','Café da manhã pós-treino','100 g de cuscuz + 2 ovos + 30 g de queijo + 120 g de mamão + café sem açúcar.'],['snack','09h30','Lanche da manhã','1 ovo cozido, conforme o plano.'],['lunch','12h30','Almoço','110 g de frango + 80 g de arroz + 100 g de feijão + salada e fruta.'],['afternoon','15h00','Lanche da tarde','Banana + 10 g de leite desnatado em pó ou opção prescrita.'],['dinner','19h00','Jantar','110 g de frango + 180 g de inhame + salada/legumes.'],['wind','20h30','Desacelerar','Diminuir telas e preparar o descanso.'],['sleep','21h30','Dormir','Meta de descanso para o treino de amanhã.']];
 const waterPlan=[['water1','06:10',300],['water2','08:00',250],['water3','10:00',250],['water4','12:00',300],['water5','14:30',250],['water6','16:30',250],['water7','18:30',250],['water8','20:30',150]];
-const defaultData={initialWeight:94.70,goalWeight:89.70,weights:[],waist:[],challengeStart:today(),challenge:{},water:{},waterPlan:waterPlan.map(([id,time,ml])=>({id,time,ml})),waterGoal:2000,checks:{},workouts:{},reminders:{},extraWater:{}};
-let data;try{data={...defaultData,...JSON.parse(localStorage.getItem('mp_all_data')||'{}')}}catch(e){data={...defaultData}};data.initialWeight=Number(data.initialWeight)||94.70;data.goalWeight=Number(data.goalWeight)||89.70;data.waterPlan=data.waterPlan||defaultData.waterPlan;data.challenge=data.challenge||{};data.water=data.water||{};data.checks=data.checks||{};data.workouts=data.workouts||{};data.reminders=data.reminders||{};
+const defaultData={updatedAt:0,initialWeight:94.70,goalWeight:89.70,weights:[],waist:[],challengeStart:today(),challenge:{},water:{},waterPlan:waterPlan.map(([id,time,ml])=>({id,time,ml})),waterGoal:2000,checks:{},workouts:{},reminders:{},extraWater:{}};
+let data;try{data={...defaultData,...JSON.parse(localStorage.getItem('mp_all_data')||'{}')}}catch(e){data={...defaultData}};data.updatedAt=Number(data.updatedAt)||0;data.initialWeight=Number(data.initialWeight)||94.70;data.goalWeight=Number(data.goalWeight)||89.70;data.waterPlan=data.waterPlan||defaultData.waterPlan;data.challenge=data.challenge||{};data.water=data.water||{};data.checks=data.checks||{};data.workouts=data.workouts||{};data.reminders=data.reminders||{};
 try {const oldWeights=JSON.parse(localStorage.getItem('mp_weights')||'[]');if(!data.weights.length && Array.isArray(oldWeights)) data.weights=oldWeights;for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(key && key.startsWith('mp_checks_')){const day=key.slice('mp_checks_'.length);if(!data.checks[day]) data.checks[day]=JSON.parse(localStorage.getItem(key)||'{}')}if(key && key.startsWith('mp_workout_')){const day=key.slice('mp_workout_'.length);if(data.workouts[day]===undefined) data.workouts[day]=JSON.parse(localStorage.getItem(key)||'false')}}} catch(e) {}
 
 function setSyncStatus(msg){
-  let el=$('syncStatus');
-  if(!el){
-    el=document.createElement('div');
-    el.id='syncStatus';
-    el.className='small';
-    el.style.marginTop='6px';
-    document.querySelector('footer').prepend(el);
-  }
-  el.textContent=msg;
+  const el=$('syncStatus');
+  if(el)el.textContent=msg;
 }
 
-function mergeData(localObj,cloudObj){
-  if(!cloudObj||typeof cloudObj!=='object')return localObj;
-  const merged={...defaultData,...localObj,...cloudObj};
-  merged.checks={...(localObj.checks||{}),...(cloudObj.checks||{})};
-  merged.workouts={...(localObj.workouts||{}),...(cloudObj.workouts||{})};
-  merged.challenge={...(localObj.challenge||{}),...(cloudObj.challenge||{})};
-  merged.reminders={...(localObj.reminders||{}),...(cloudObj.reminders||{})};
-  const byDate=(arrA=[],arrB=[])=>{
-    const map=new Map();
-    [...arrA,...arrB].forEach(item=>{if(item&&item.date)map.set(item.date,item)});
-    return [...map.values()].sort((a,b)=>a.date.localeCompare(b.date));
+function chooseNewestState(localObj,cloudObj){
+  if(!cloudObj||typeof cloudObj!=='object')return {...defaultData,...localObj};
+  const lTime=Number(localObj.updatedAt)||0;
+  const cTime=Number(cloudObj.updatedAt)||0;
+  // Quem tiver alteração mais recente define o estado principal (evita ressurgir itens desmarcados/apagados)
+  const base=cTime>=lTime?cloudObj:localObj;
+  const newestTs=Math.max(lTime,cTime);
+  return {
+    ...defaultData,
+    ...base,
+    updatedAt:newestTs,
+    weights:Array.isArray(base.weights)?base.weights:[],
+    waist:Array.isArray(base.waist)?base.waist:[],
+    checks:base.checks||{},
+    workouts:base.workouts||{},
+    challenge:base.challenge||{},
+    reminders:base.reminders||{}
   };
-  merged.weights=byDate(localObj.weights,cloudObj.weights);
-  merged.waist=byDate(localObj.waist,cloudObj.waist);
-  return merged;
 }
 
 async function pullFromCloud(){
   if(!SYNC_URL||SYNC_URL.startsWith('COLE_AQUI'))return;
   try{
-    setSyncStatus('Sincronizando com a nuvem...');
-    const res=await fetch(`${SYNC_URL}?key=${encodeURIComponent(SYNC_KEY)}&t=${Date.now()}`);
+    setSyncStatus('A sincronizar com a nuvem...');
+    const res=await fetch(`${SYNC_URL}?key=${encodeURIComponent(SYNC_KEY)}&t=${Date.now()}`,{cache:'no-store'});
     const json=await res.json();
     if(json.ok&&json.payload){
       const cloudData=JSON.parse(json.payload);
-      data=mergeData(data,cloudData);
+      const chosen=chooseNewestState(data,cloudData);
+      const cloudTs=Number(cloudData.updatedAt)||0;
+      const localTs=Number(data.updatedAt)||0;
+      data=chosen;
       localStorage.setItem('mp_all_data',JSON.stringify(data));
       renderAll();
-      setSyncStatus('Sincronizado com a nuvem ✓');
+      if(localTs>cloudTs){
+        await pushToCloud();
+      }else{
+        setSyncStatus('Sincronizado com a nuvem ✓');
+      }
+    }else if(Number(data.updatedAt)>0){
+      await pushToCloud();
     }else{
       setSyncStatus('Pronto para sincronizar na nuvem.');
     }
   }catch(e){
-    setSyncStatus('Sem conexão no momento (dados salvos localmente).');
+    setSyncStatus('Sem conexão no momento (dados guardados localmente).');
   }
 }
 
 async function pushToCloud(){
   if(!SYNC_URL||SYNC_URL.startsWith('COLE_AQUI'))return;
   try{
-    setSyncStatus('Salvando na nuvem...');
+    setSyncStatus('A guardar na nuvem...');
     await fetch(SYNC_URL,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:JSON.stringify({key:SYNC_KEY,payload:JSON.stringify(data)})
     });
     const hora=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    setSyncStatus(`Salvo na nuvem às ${hora} ✓`);
+    setSyncStatus(`Guardado na nuvem às ${hora} ✓`);
   }catch(e){
-    setSyncStatus('Salvo localmente; tentará sincronizar novamente.');
+    setSyncStatus('Guardado localmente; tentará sincronizar novamente.');
   }
 }
 
 function scheduleCloudPush(){
   clearTimeout(syncTimer);
-  syncTimer=setTimeout(pushToCloud,800);
+  syncTimer=setTimeout(pushToCloud,500);
 }
 
 function persist(){
+  data.updatedAt=Date.now();
   localStorage.setItem('mp_all_data',JSON.stringify(data));
   scheduleCloudPush();
 }
@@ -127,5 +137,5 @@ async function checkReminders(){if(!('Notification'in window)||Notification.perm
 setInterval(checkReminders,15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders()});checkReminders();
 $('enableNotifications').onclick=async()=>{if(!('Notification'in window)){$('notificationStatus').textContent='Este navegador não oferece notificações.';return}try{const p=await Notification.requestPermission();if(p!=='granted'){$('notificationStatus').textContent='Permissão: '+p+'. Autorize as notificações nas configurações do Chrome.';return}const reg=await swReady;if(!reg){$('notificationStatus').textContent='Permissão concedida, mas não foi possível ativar o Service Worker. Confira se sw.js está na raiz do GitHub.';return}await reg.showNotification('Meu Plano — Márcio',{body:'Notificações ativadas com sucesso! 💪',tag:'meu-plano-teste',renotify:false});$('notificationStatus').textContent='Permissão: granted • Service Worker ativo. Mantenha o app aberto para os lembretes nos horários.'}catch(e){$('notificationStatus').textContent='Não foi possível ativar: '+e.message}};
 if('Notification'in window)$('notificationStatus').textContent='Permissão atual: '+Notification.permission+'.';
-function renderAll(){renderMeals();renderDaily();renderChallenge();renderWeights();renderWaist();renderReminders()}document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id===b.dataset.tab));if(b.dataset.tab==='evolucao')renderWeights()});$('todayLabel').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});renderAll();pullFromCloud();document.addEventListener('visibilitychange',()=>{if(!document.hidden)pullFromCloud()});
+function renderAll(){renderMeals();renderDaily();renderChallenge();renderWeights();renderWaist();renderReminders()}document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id===b.dataset.tab));if(b.dataset.tab==='evolucao')renderWeights()});$('todayLabel').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});$('forceSyncBtn').onclick=()=>pullFromCloud();renderAll();pullFromCloud();document.addEventListener('visibilitychange',()=>{if(!document.hidden)pullFromCloud()});
 </script></body></html>
