@@ -19,8 +19,12 @@
 <div class="card"><b>Relatório mensal</b><div class="row" style="margin-top:8px"><div><label class="small">Mês</label><input class="field" type="month" id="reportMonth"></div><button class="btn" id="makeReport">Gerar relatório</button></div><div id="monthlyReport" class="notice" style="margin-top:10px">Escolha um mês para comparar a primeira e a última pesagem registradas.</div></div></section>
 <section id="lembretes" class="panel"><div class="title">Lembretes e notificações</div><div class="card"><b>🔔 Notificações do navegador</b><p class="small">Autorize as notificações. O aplicativo deve permanecer aberto e ativo para conferir os horários. O Service Worker melhora a exibição das notificações no Android, mas não agenda alarmes confiáveis com o navegador fechado.</p><button class="btn" id="enableNotifications">Ativar notificações</button><div class="status" id="notificationStatus">Permissão ainda não solicitada.</div></div><div class="card" id="reminderList"></div></section>
 <section id="guia" class="panel"><div class="title">Orientações alimentares</div><div class="card"><b>🍽️ Organização da dieta recebida</b><p class="muted">O app organiza as opções do plano alimentar que você compartilhou, elaborado em 31/10/2025. Não substitui uma consulta nem atualiza automaticamente a prescrição.</p><ul><li><b>Café:</b> 100 g de cuscuz, 2 ovos, 30 g de queijo, 120 g de mamão e café sem açúcar.</li><li><b>Lanche:</b> 1 ovo cozido, conforme o plano.</li><li><b>Almoço:</b> 110 g de frango, 80 g de arroz, 100 g de feijão, salada e fruta.</li><li><b>Lanche da tarde:</b> banana e 10 g de leite desnatado em pó; ou opção de torradas, requeijão e uvas.</li><li><b>Jantar:</b> 110 g de frango, 180 g de inhame e vegetais, respeitando substituições.</li><li><b>Ceia opcional:</b> leite desnatado ou banana com leite em pó, conforme o plano.</li></ul></div><div class="notice"><b>Cuidados:</b> siga as orientações médicas sobre hidratação e exercício. Não altere medicamento por conta própria. O propranolol pode modificar a resposta da frequência cardíaca ao exercício; não use metas de batimentos sem orientação profissional.</div></section>
-<footer>Meu Plano • Seus registros ficam salvos localmente neste aparelho, neste navegador. Os dados antigos de hidratação foram preservados.</footer></div>
+<footer>Meu Plano • Seus registros ficam salvos localmente e sincronizam com a nuvem quando houver conexão.</footer></div>
 <script>
+const SYNC_URL = 'COLE_AQUI_A_URL_DO_WEB_APP';
+const SYNC_KEY = 'marcio_plano_v1';
+let syncTimer = null;
+
 const $=id=>document.getElementById(id), today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}, fmt=n=>Number(n).toLocaleString('pt-BR',{maximumFractionDigits:2}), parseNum=v=>Number(String(v).replace(',','.'));
 function atualizarSaudacao(){const hora=new Date().getHours();const saudacao=hora>=5&&hora<12?'Bom dia':hora>=12&&hora<18?'Boa tarde':'Boa noite';$('greeting').textContent=saudacao+', Márcio! 💪'}
 atualizarSaudacao();setInterval(atualizarSaudacao,60000);
@@ -29,7 +33,82 @@ const waterPlan=[['water1','06:10',300],['water2','08:00',250],['water3','10:00'
 const defaultData={initialWeight:94.70,goalWeight:89.70,weights:[],waist:[],challengeStart:today(),challenge:{},water:{},waterPlan:waterPlan.map(([id,time,ml])=>({id,time,ml})),waterGoal:2000,checks:{},workouts:{},reminders:{},extraWater:{}};
 let data;try{data={...defaultData,...JSON.parse(localStorage.getItem('mp_all_data')||'{}')}}catch(e){data={...defaultData}};data.initialWeight=Number(data.initialWeight)||94.70;data.goalWeight=Number(data.goalWeight)||89.70;data.waterPlan=data.waterPlan||defaultData.waterPlan;data.challenge=data.challenge||{};data.water=data.water||{};data.checks=data.checks||{};data.workouts=data.workouts||{};data.reminders=data.reminders||{};
 try {const oldWeights=JSON.parse(localStorage.getItem('mp_weights')||'[]');if(!data.weights.length && Array.isArray(oldWeights)) data.weights=oldWeights;for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(key && key.startsWith('mp_checks_')){const day=key.slice('mp_checks_'.length);if(!data.checks[day]) data.checks[day]=JSON.parse(localStorage.getItem(key)||'{}')}if(key && key.startsWith('mp_workout_')){const day=key.slice('mp_workout_'.length);if(data.workouts[day]===undefined) data.workouts[day]=JSON.parse(localStorage.getItem(key)||'false')}}} catch(e) {}
-function persist(){localStorage.setItem('mp_all_data',JSON.stringify(data))}
+
+function setSyncStatus(msg){
+  let el=$('syncStatus');
+  if(!el){
+    el=document.createElement('div');
+    el.id='syncStatus';
+    el.className='small';
+    el.style.marginTop='6px';
+    document.querySelector('footer').prepend(el);
+  }
+  el.textContent=msg;
+}
+
+function mergeData(localObj,cloudObj){
+  if(!cloudObj||typeof cloudObj!=='object')return localObj;
+  const merged={...defaultData,...localObj,...cloudObj};
+  merged.checks={...(localObj.checks||{}),...(cloudObj.checks||{})};
+  merged.workouts={...(localObj.workouts||{}),...(cloudObj.workouts||{})};
+  merged.challenge={...(localObj.challenge||{}),...(cloudObj.challenge||{})};
+  merged.reminders={...(localObj.reminders||{}),...(cloudObj.reminders||{})};
+  const byDate=(arrA=[],arrB=[])=>{
+    const map=new Map();
+    [...arrA,...arrB].forEach(item=>{if(item&&item.date)map.set(item.date,item)});
+    return [...map.values()].sort((a,b)=>a.date.localeCompare(b.date));
+  };
+  merged.weights=byDate(localObj.weights,cloudObj.weights);
+  merged.waist=byDate(localObj.waist,cloudObj.waist);
+  return merged;
+}
+
+async function pullFromCloud(){
+  if(!SYNC_URL||SYNC_URL.startsWith('COLE_AQUI'))return;
+  try{
+    setSyncStatus('Sincronizando com a nuvem...');
+    const res=await fetch(`${SYNC_URL}?key=${encodeURIComponent(SYNC_KEY)}&t=${Date.now()}`);
+    const json=await res.json();
+    if(json.ok&&json.payload){
+      const cloudData=JSON.parse(json.payload);
+      data=mergeData(data,cloudData);
+      localStorage.setItem('mp_all_data',JSON.stringify(data));
+      renderAll();
+      setSyncStatus('Sincronizado com a nuvem ✓');
+    }else{
+      setSyncStatus('Pronto para sincronizar na nuvem.');
+    }
+  }catch(e){
+    setSyncStatus('Sem conexão no momento (dados salvos localmente).');
+  }
+}
+
+async function pushToCloud(){
+  if(!SYNC_URL||SYNC_URL.startsWith('COLE_AQUI'))return;
+  try{
+    setSyncStatus('Salvando na nuvem...');
+    await fetch(SYNC_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({key:SYNC_KEY,payload:JSON.stringify(data)})
+    });
+    const hora=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    setSyncStatus(`Salvo na nuvem às ${hora} ✓`);
+  }catch(e){
+    setSyncStatus('Salvo localmente; tentará sincronizar novamente.');
+  }
+}
+
+function scheduleCloudPush(){
+  clearTimeout(syncTimer);
+  syncTimer=setTimeout(pushToCloud,800);
+}
+
+function persist(){
+  localStorage.setItem('mp_all_data',JSON.stringify(data));
+  scheduleCloudPush();
+}
+
 function renderMeals(){const day=data.checks[today()]||{};const mealRows=meals.slice(0,7).map(([id,time,title,desc])=>({id,time,title,desc,kind:'meal'}));const waterRows=waterPlan.map(([id,time,ml])=>({id,time,title:`Água — ${ml} ml`,desc:'Lembrete de hidratação',kind:'water'}));const rows=[...mealRows,...waterRows].sort((a,b)=>a.time.localeCompare(b.time));$('mealList').innerHTML=rows.map(r=>`<div class="meal"><div class="time">${r.time}</div><div><h3>${r.title}</h3><p>${r.desc}</p></div><label><input type="checkbox" data-check="${r.id}" ${day[r.id]?'checked':''}> Feito</label></div>`).join('');document.querySelectorAll('[data-check]').forEach(el=>el.onchange=()=>{data.checks[today()]={...(data.checks[today()]||{}),[el.dataset.check]:el.checked};persist();renderDaily()});$('workout').checked=!!data.workouts[today()]}
 $('workout').onchange=e=>{data.workouts[today()]=e.target.checked;persist();renderDaily()};function renderDaily(){const c=data.checks[today()]||{};const routineIds=meals.slice(0,7).map(m=>m[0]);const waterIds=waterPlan.map(w=>w[0]);const n=[...routineIds,...waterIds].filter(id=>c[id]).length+(data.workouts[today()]?1:0),total=16,p=Math.round(n/total*100);$('dailyText').textContent=`${n} de ${total} etapas concluídas • ${p}%`;$('dailyBar').style.width=p+'%';$('dailyRemaining').textContent=n===total?'Parabéns! Você concluiu todas as etapas de hoje.':`Faltam ${total-n} ${total-n===1?'etapa':'etapas'} para concluir o dia.`}
 function renderChallenge(){const start=new Date((data.challengeStart||today())+'T12:00:00');let done=0,streak=0,run=0,html='';for(let i=0;i<30;i++){const d=new Date(start);d.setDate(d.getDate()+i);const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`,is=data.challenge[key];if(is)done++;if(is)run++;else run=0;streak=run;html+=`<button class="day ${is?'done':''} ${key===today()?'today':''}" data-day="${key}" title="${key}"><b>${d.getDate()}</b>${['dom','seg','ter','qua','qui','sex','sáb'][d.getDay()]}</button>`}$('calendar').innerHTML=html;document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{data.challenge[b.dataset.day]=!data.challenge[b.dataset.day];persist();renderChallenge()});const pct=Math.round(done/30*100);$('challengeDone').textContent=done+'/30';$('challengeProgress').textContent=pct+'%';$('challengePct').textContent=pct+'%';$('challengeBar').style.width=pct+'%';$('streak').textContent=streak+' dias'}$('challengeStart').value=data.challengeStart||today();$('setChallenge').onclick=()=>{if($('challengeStart').value){data.challengeStart=$('challengeStart').value;persist();renderChallenge()}};
@@ -48,5 +127,5 @@ async function checkReminders(){if(!('Notification'in window)||Notification.perm
 setInterval(checkReminders,15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders()});checkReminders();
 $('enableNotifications').onclick=async()=>{if(!('Notification'in window)){$('notificationStatus').textContent='Este navegador não oferece notificações.';return}try{const p=await Notification.requestPermission();if(p!=='granted'){$('notificationStatus').textContent='Permissão: '+p+'. Autorize as notificações nas configurações do Chrome.';return}const reg=await swReady;if(!reg){$('notificationStatus').textContent='Permissão concedida, mas não foi possível ativar o Service Worker. Confira se sw.js está na raiz do GitHub.';return}await reg.showNotification('Meu Plano — Márcio',{body:'Notificações ativadas com sucesso! 💪',tag:'meu-plano-teste',renotify:false});$('notificationStatus').textContent='Permissão: granted • Service Worker ativo. Mantenha o app aberto para os lembretes nos horários.'}catch(e){$('notificationStatus').textContent='Não foi possível ativar: '+e.message}};
 if('Notification'in window)$('notificationStatus').textContent='Permissão atual: '+Notification.permission+'.';
-function renderAll(){renderMeals();renderDaily();renderChallenge();renderWeights();renderWaist();renderReminders()}document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id===b.dataset.tab));if(b.dataset.tab==='evolucao')renderWeights()});$('todayLabel').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});renderAll();
+function renderAll(){renderMeals();renderDaily();renderChallenge();renderWeights();renderWaist();renderReminders()}document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id===b.dataset.tab));if(b.dataset.tab==='evolucao')renderWeights()});$('todayLabel').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});renderAll();pullFromCloud();document.addEventListener('visibilitychange',()=>{if(!document.hidden)pullFromCloud()});
 </script></body></html>
